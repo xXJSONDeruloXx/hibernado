@@ -30,6 +30,8 @@ const cleanupHibernate = callable<[], any>("cleanup_hibernate");
 const setPowerButtonOverride = callable<[boolean, string], any>("set_power_button_override");
 const getHibernateDelay = callable<[], any>("get_hibernate_delay");
 const setHibernateDelay = callable<[number], any>("set_hibernate_delay");
+const getLowBatteryHibernateStatus = callable<[], any>("get_low_battery_hibernate_status");
+const setLowBatteryHibernate = callable<[boolean, number], any>("set_low_battery_hibernate");
 
 // Custom modal component that shows hibernating state before actually hibernating
 function HibernateConfirmModal({ closeModal }: { closeModal?: () => void }) {
@@ -102,6 +104,8 @@ function Content() {
   const [powerButtonOverride, setPowerButtonOverrideState] = useState(false);
   const [overrideMode, setOverrideMode] = useState<"hibernate" | "suspend-then-hibernate">("hibernate");
   const [hibernateDelayMinutes, setHibernateDelayMinutes] = useState<number>(60);
+  const [lowBatteryHibernate, setLowBatteryHibernateState] = useState(false);
+  const [lowBatteryThreshold, setLowBatteryThreshold] = useState<number>(5);
 
   useEffect(() => {
     loadStatus();
@@ -141,6 +145,15 @@ function Content() {
         const delayResult = await getHibernateDelay();
         if (delayResult.success && delayResult.delay_minutes) {
           setHibernateDelayMinutes(delayResult.delay_minutes);
+        }
+        
+        // Load low battery hibernate status
+        const lowBatteryResult = await getLowBatteryHibernateStatus();
+        if (lowBatteryResult.success) {
+          setLowBatteryHibernateState(lowBatteryResult.enabled);
+          if (lowBatteryResult.threshold) {
+            setLowBatteryThreshold(lowBatteryResult.threshold);
+          }
         }
       }
     } catch (error) {
@@ -281,6 +294,25 @@ function Content() {
     }
   };
 
+  const handleLowBatteryHibernateToggle = async (enabled: boolean) => {
+    setIsLoading(true);
+    
+    try {
+      const result = await setLowBatteryHibernate(enabled, lowBatteryThreshold);
+      
+      if (result.success) {
+        setLowBatteryHibernateState(enabled);
+        await loadStatus();
+      } else {
+        console.error("Low battery hibernate toggle failed:", result.error);
+      }
+    } catch (error) {
+      console.error("Low battery hibernate toggle failed:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const formatDelayLabel = (minutes: number): string => {
     if (minutes < 60) {
       return `${minutes} min`;
@@ -391,6 +423,35 @@ function Content() {
                 disabled={isLoading}
               />
             </Field>
+          </PanelSectionRow>
+
+          <PanelSectionRow>
+            <div
+              style={{
+                fontSize: "14px",
+                fontWeight: "bold",
+                marginTop: "8px",
+                marginBottom: "6px",
+                borderBottom: "1px solid rgba(255, 255, 255, 0.2)",
+                paddingBottom: "3px",
+                color: "white"
+              }}
+            >
+              Battery Protection
+            </div>
+          </PanelSectionRow>
+
+          <PanelSectionRow>
+            <ToggleField
+              label="Auto-Hibernate on Low Battery"
+              description={lowBatteryHibernate 
+                ? `Will hibernate when battery drops to ${lowBatteryThreshold}%`
+                : "Disabled - battery can drain completely"
+              }
+              checked={lowBatteryHibernate}
+              onChange={handleLowBatteryHibernateToggle}
+              disabled={isLoading}
+            />
           </PanelSectionRow>
         </>
       )}

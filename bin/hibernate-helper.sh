@@ -449,6 +449,13 @@ EOF
         
         log "Cleaning up hibernation configuration..."
         
+        # Remove low battery monitor if present
+        log "Removing low battery monitor..."
+        systemctl stop hibernado-battery-monitor.service 2>/dev/null || true
+        systemctl disable hibernado-battery-monitor.service 2>/dev/null || true
+        rm -f /etc/systemd/system/hibernado-battery-monitor.service
+        rm -f /home/deck/.local/libexec/hibernado-battery-monitor.sh
+        
         # Remove power button override if present
         SYMLINK_PATH="/etc/systemd/system/systemd-suspend.service"
         if [ -L "$SYMLINK_PATH" ] || [ -e "$SYMLINK_PATH" ]; then
@@ -577,9 +584,135 @@ EOF
         log "Hibernate delay set to $DELAY_MIN minutes"
         exit 0
         ;;
+    
+    set-low-battery-hibernate)
+        # Enable or disable low battery hibernate: $2 = enable|disable, $3 = threshold (default 5)
+        ACTION="${2:-}"
+        THRESHOLD="${3:-5}"
+        
+        if [ "$ACTION" = "enable" ]; then
+            log "Setting up low battery hibernate at ${THRESHOLD}%..."
+            
+            # Create the battery monitor script
+            mkdir -p /home/deck/.local/libexec
+            cat > /home/deck/.local/libexec/hibernado-battery-monitor.sh << 'BATTERYSCRIPT'
+#!/bin/bash
+# Hibernado low battery monitor
+# Checks battery level and hibernates if below threshold
+
+THRESHOLD=${1:-5}
+CHECK_INTERVAL=60
+
+log() {
+    echo "[hibernado-battery] $(date '+%Y-%m-%d %H:%M:%S') $1" | systemd-cat -t hibernado-battery -p info
+}
+
+get_battery_level() {
+    if [ -f /sys/class/power_supply/BAT1/capacity ]; then
+        cat /sys/class/power_supply/BAT1/capacity
+    elif [ -f /sys/class/power_supply/BAT0/capacity ]; then
+        cat /sys/class/power_supply/BAT0/capacity
+    else
+        echo "100"  # Default to 100 if no battery found
+    fi
+}
+
+is_charging() {
+    local status=""
+    if [ -f /sys/class/power_supply/BAT1/status ]; then
+        status=$(cat /sys/class/power_supply/BAT1/status)
+    elif [ -f /sys/class/power_supply/BAT0/status ]; then
+        status=$(cat /sys/class/power_supply/BAT0/status)
+    fi
+    
+    if [ "$status" = "Charging" ] || [ "$status" = "Full" ]; then
+        return 0
+    fi
+    return 1
+}
+
+log "Starting battery monitor with threshold ${THRESHOLD}%"
+
+while true; do
+    LEVEL=$(get_battery_level)
+    
+    if ! is_charging && [ "$LEVEL" -le "$THRESHOLD" ]; then
+        log "Battery at ${LEVEL}% (threshold: ${THRESHOLD}%), initiating hibernate..."
+        
+        # Use systemctl to trigger hibernate (this will use our configured service with all fixes)
+        systemctl hibernate
+        
+        # If we wake up from hibernate, wait a bit before checking again
+        sleep 30
+    fi
+    
+    sleep $CHECK_INTERVAL
+done
+BATTERYSCRIPT
+            chmod +x /home/deck/.local/libexec/hibernado-battery-monitor.sh
+            chown deck:deck /home/deck/.local/libexec/hibernado-battery-monitor.sh
+            
+            # Create the systemd service
+            cat > /etc/systemd/system/hibernado-battery-monitor.service << EOF
+[Unit]
+Description=Hibernado Low Battery Monitor
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/home/deck/.local/libexec/hibernado-battery-monitor.sh ${THRESHOLD}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+            
+            systemctl daemon-reload
+            systemctl enable hibernado-battery-monitor.service
+            systemctl restart hibernado-battery-monitor.service
+            
+            log "Low battery hibernate enabled at ${THRESHOLD}%"
+            echo "ENABLED:${THRESHOLD}"
+            exit 0
+            
+        elif [ "$ACTION" = "disable" ]; then
+            log "Disabling low battery hibernate..."
+            
+            systemctl stop hibernado-battery-monitor.service 2>/dev/null || true
+            systemctl disable hibernado-battery-monitor.service 2>/dev/null || true
+            rm -f /etc/systemd/system/hibernado-battery-monitor.service
+            rm -f /home/deck/.local/libexec/hibernado-battery-monitor.sh
+            systemctl daemon-reload
+            
+            log "Low battery hibernate disabled"
+            echo "DISABLED"
+            exit 0
+        else
+            log "ERROR: Invalid action '$ACTION' (must be enable or disable)"
+            echo "ERROR: Invalid action" >&2
+            exit 1
+        fi
+        ;;
+    
+    get-low-battery-status)
+        # Check if low battery hibernate is enabled and get threshold
+        if systemctl is-enabled hibernado-battery-monitor.service 2>/dev/null | grep -q "enabled"; then
+            # Try to extract threshold from service file
+            if [ -f /etc/systemd/system/hibernado-battery-monitor.service ]; then
+                THRESHOLD=$(grep "ExecStart=" /etc/systemd/system/hibernado-battery-monitor.service | grep -oP '\d+$' || echo "5")
+                echo "ENABLED:${THRESHOLD}"
+            else
+                echo "ENABLED:5"
+            fi
+        else
+            echo "DISABLED"
+        fi
+        exit 0
+        ;;
         
     *)
-        echo "Usage: $0 {status|prepare|hibernate|suspend-then-hibernate|set-power-button|get-delay|set-delay|cleanup}"
+        echo "Usage: $0 {status|prepare|hibernate|suspend-then-hibernate|set-power-button|get-delay|set-delay|set-low-battery-hibernate|get-low-battery-status|cleanup}"
         exit 1
         ;;
 esac
