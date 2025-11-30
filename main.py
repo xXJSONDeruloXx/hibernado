@@ -662,3 +662,97 @@ class Plugin:
                 "error": error_msg
             }
 
+    async def get_low_battery_settings(self) -> dict:
+        """Get the current low battery hibernate settings
+        
+        Returns:
+            dict with success, enabled, threshold
+        """
+        try:
+            decky.logger.info("Getting low battery hibernate settings...")
+            
+            returncode, stdout, stderr = self._run_helper("get-low-battery", timeout=5)
+            
+            if returncode != 0:
+                decky.logger.warning(f"Could not get low battery settings: {stderr}")
+                return {
+                    "success": True,
+                    "enabled": False,
+                    "threshold": 5
+                }
+            
+            # Parse output: "enabled:5" or "disabled:5"
+            output = stdout.strip()
+            parts = output.split(":")
+            enabled = parts[0] == "enabled"
+            threshold = int(parts[1]) if len(parts) > 1 else 5
+            
+            decky.logger.info(f"Low battery hibernate: enabled={enabled}, threshold={threshold}%")
+            
+            return {
+                "success": True,
+                "enabled": enabled,
+                "threshold": threshold
+            }
+            
+        except Exception as e:
+            error_msg = str(e)
+            decky.logger.error(f"Error getting low battery settings: {error_msg}")
+            return {
+                "success": False,
+                "error": error_msg,
+                "enabled": False,
+                "threshold": 5
+            }
+
+    async def set_low_battery_hibernate(self, enabled: bool, threshold: int) -> dict:
+        """Enable or disable low battery hibernate protection
+        
+        Args:
+            enabled: True to enable, False to disable
+            threshold: Battery percentage threshold (e.g., 5, 10, 15)
+        """
+        try:
+            decky.logger.info(f"Setting low battery hibernate: enabled={enabled}, threshold={threshold}%")
+            
+            # Check if hibernation is ready first
+            status = await self.check_hibernate_status()
+            if not status.get("ready", False):
+                return {
+                    "success": False,
+                    "error": "Hibernation must be set up before enabling low battery protection"
+                }
+            
+            if enabled:
+                returncode, stdout, stderr = self._run_helper(
+                    "set-low-battery", "enable", str(threshold),
+                    timeout=10
+                )
+            else:
+                returncode, stdout, stderr = self._run_helper(
+                    "set-low-battery", "disable",
+                    timeout=10
+                )
+            
+            if returncode != 0:
+                error_msg = stderr or "Unknown error setting low battery hibernate"
+                decky.logger.error(f"Set low battery hibernate failed: {error_msg}")
+                return {
+                    "success": False,
+                    "error": error_msg
+                }
+            
+            decky.logger.info(f"Low battery hibernate {'enabled at ' + str(threshold) + '%' if enabled else 'disabled'} successfully")
+            return {
+                "success": True,
+                "message": f"Low battery hibernate {'enabled at ' + str(threshold) + '%' if enabled else 'disabled'}"
+            }
+            
+        except Exception as e:
+            error_msg = str(e)
+            decky.logger.error(f"Error setting low battery hibernate: {error_msg}")
+            return {
+                "success": False,
+                "error": error_msg
+            }
+

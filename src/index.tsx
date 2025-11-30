@@ -30,6 +30,8 @@ const cleanupHibernate = callable<[], any>("cleanup_hibernate");
 const setPowerButtonOverride = callable<[boolean, string], any>("set_power_button_override");
 const getHibernateDelay = callable<[], any>("get_hibernate_delay");
 const setHibernateDelay = callable<[number], any>("set_hibernate_delay");
+const getLowBatterySettings = callable<[], any>("get_low_battery_settings");
+const setLowBatteryHibernate = callable<[boolean, number], any>("set_low_battery_hibernate");
 
 // Custom modal component that shows hibernating state before actually hibernating
 function HibernateConfirmModal({ closeModal }: { closeModal?: () => void }) {
@@ -102,6 +104,8 @@ function Content() {
   const [powerButtonOverride, setPowerButtonOverrideState] = useState(false);
   const [overrideMode, setOverrideMode] = useState<"hibernate" | "suspend-then-hibernate">("hibernate");
   const [hibernateDelayMinutes, setHibernateDelayMinutes] = useState<number>(60);
+  const [lowBatteryEnabled, setLowBatteryEnabled] = useState(false);
+  const [lowBatteryThreshold, setLowBatteryThreshold] = useState<number>(5);
 
   useEffect(() => {
     loadStatus();
@@ -141,6 +145,13 @@ function Content() {
         const delayResult = await getHibernateDelay();
         if (delayResult.success && delayResult.delay_minutes) {
           setHibernateDelayMinutes(delayResult.delay_minutes);
+        }
+        
+        // Load low battery settings
+        const lowBatteryResult = await getLowBatterySettings();
+        if (lowBatteryResult.success) {
+          setLowBatteryEnabled(lowBatteryResult.enabled);
+          setLowBatteryThreshold(lowBatteryResult.threshold);
         }
       }
     } catch (error) {
@@ -281,6 +292,42 @@ function Content() {
     }
   };
 
+  const handleLowBatteryToggle = async (enabled: boolean) => {
+    setIsLoading(true);
+    
+    try {
+      const result = await setLowBatteryHibernate(enabled, lowBatteryThreshold);
+      
+      if (result.success) {
+        setLowBatteryEnabled(enabled);
+        await loadStatus();
+      } else {
+        console.error("Low battery toggle failed:", result.error);
+      }
+    } catch (error) {
+      console.error("Low battery toggle failed:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleLowBatteryThresholdChange = async (threshold: number) => {
+    setLowBatteryThreshold(threshold);
+    
+    // If low battery hibernate is enabled, update with new threshold
+    if (lowBatteryEnabled) {
+      try {
+        const result = await setLowBatteryHibernate(true, threshold);
+        
+        if (!result.success) {
+          console.error("Threshold change failed:", result.error);
+        }
+      } catch (error) {
+        console.error("Threshold change failed:", error);
+      }
+    }
+  };
+
   const formatDelayLabel = (minutes: number): string => {
     if (minutes < 60) {
       return `${minutes} min`;
@@ -392,6 +439,56 @@ function Content() {
               />
             </Field>
           </PanelSectionRow>
+
+          <PanelSectionRow>
+            <div
+              style={{
+                fontSize: "14px",
+                fontWeight: "bold",
+                marginTop: "8px",
+                marginBottom: "6px",
+                borderBottom: "1px solid rgba(255, 255, 255, 0.2)",
+                paddingBottom: "3px",
+                color: "white"
+              }}
+            >
+              Low Battery Protection
+            </div>
+          </PanelSectionRow>
+
+          <PanelSectionRow>
+            <ToggleField
+              label="Auto-Hibernate on Low Battery"
+              description={lowBatteryEnabled 
+                ? `Will hibernate instead of sleep when battery ≤ ${lowBatteryThreshold}%`
+                : "Disabled - device may fully discharge while sleeping"
+              }
+              checked={lowBatteryEnabled}
+              onChange={handleLowBatteryToggle}
+              disabled={isLoading}
+            />
+          </PanelSectionRow>
+
+          {lowBatteryEnabled && (
+            <PanelSectionRow>
+              <Field 
+                label="Battery Threshold"
+                childrenLayout="below"
+                childrenContainerWidth="max"
+              >
+                <Dropdown
+                  rgOptions={[
+                    { data: 5, label: "5%" },
+                    { data: 10, label: "10%" },
+                    { data: 15, label: "15%" }
+                  ]}
+                  selectedOption={lowBatteryThreshold}
+                  onChange={(option: SingleDropdownOption) => handleLowBatteryThresholdChange(option.data as number)}
+                  disabled={isLoading}
+                />
+              </Field>
+            </PanelSectionRow>
+          )}
         </>
       )}
 

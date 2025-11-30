@@ -449,6 +449,12 @@ EOF
         
         log "Cleaning up hibernation configuration..."
         
+        # Remove low battery hibernate script if present
+        if [ -f /etc/systemd/system-sleep/hibernado-low-battery.sh ]; then
+            log "Removing low battery hibernate script..."
+            rm -f /etc/systemd/system-sleep/hibernado-low-battery.sh
+        fi
+        
         # Remove power button override if present
         SYMLINK_PATH="/etc/systemd/system/systemd-suspend.service"
         if [ -L "$SYMLINK_PATH" ] || [ -e "$SYMLINK_PATH" ]; then
@@ -577,9 +583,116 @@ EOF
         log "Hibernate delay set to $DELAY_MIN minutes"
         exit 0
         ;;
+    
+    get-low-battery)
+        # Check if low battery hibernate is enabled and get threshold
+        SCRIPT_PATH="/etc/systemd/system-sleep/hibernado-low-battery.sh"
+        
+        if [ -f "$SCRIPT_PATH" ]; then
+            # Extract threshold from the script
+            THRESHOLD=$(grep "^BATTERY_THRESHOLD=" "$SCRIPT_PATH" | cut -d'=' -f2)
+            if [ -n "$THRESHOLD" ]; then
+                echo "enabled:$THRESHOLD"
+            else
+                echo "enabled:5"
+            fi
+        else
+            echo "disabled:5"
+        fi
+        exit 0
+        ;;
+    
+    set-low-battery)
+        # Enable or disable low battery hibernate
+        # Usage: set-low-battery enable 5|10|15
+        #        set-low-battery disable
+        ACTION="${2:-}"
+        THRESHOLD="${3:-5}"
+        
+        SCRIPT_PATH="/etc/systemd/system-sleep/hibernado-low-battery.sh"
+        
+        if [ "$ACTION" = "enable" ]; then
+            if ! [[ "$THRESHOLD" =~ ^[0-9]+$ ]]; then
+                log "ERROR: Invalid threshold value (must be a number)"
+                echo "ERROR: Invalid threshold" >&2
+                exit 1
+            fi
+            
+            log "Enabling low battery hibernate at ${THRESHOLD}%..."
+            
+            # Create the directory if it doesn't exist
+            mkdir -p /etc/systemd/system-sleep
+            
+            cat > "$SCRIPT_PATH" << 'SCRIPTEOF'
+#!/bin/bash
+# hibernado - Low battery hibernate protection
+# This script runs when entering/exiting sleep states
+# Arguments: $1 = pre/post, $2 = suspend/hibernate/hybrid-sleep
+
+BATTERY_THRESHOLD=__THRESHOLD__
+BATTERY_PATH="/sys/class/power_supply/BAT1/capacity"
+AC_PATH="/sys/class/power_supply/ACAD/online"
+LOG_TAG="hibernado-low-battery"
+
+log() {
+    echo "[$LOG_TAG] $1" | systemd-cat -t "$LOG_TAG" -p info
+}
+
+# Only act when about to suspend (not hibernate or other states)
+if [ "$1" = "pre" ] && [ "$2" = "suspend" ]; then
+    # Check if battery file exists
+    if [ ! -f "$BATTERY_PATH" ]; then
+        log "Battery path not found, skipping check"
+        exit 0
+    fi
+    
+    BATTERY_LEVEL=$(cat "$BATTERY_PATH" 2>/dev/null)
+    AC_ONLINE=$(cat "$AC_PATH" 2>/dev/null || echo "0")
+    
+    log "Battery at ${BATTERY_LEVEL}%, AC online: ${AC_ONLINE}, threshold: ${BATTERY_THRESHOLD}%"
+    
+    # Only hibernate if on battery (not AC) and below threshold
+    if [ "$AC_ONLINE" = "0" ] && [ "$BATTERY_LEVEL" -le "$BATTERY_THRESHOLD" ]; then
+        log "Battery level ${BATTERY_LEVEL}% is at or below ${BATTERY_THRESHOLD}% threshold, hibernating instead"
+        # Use systemctl hibernate in background and exit with error to cancel suspend
+        (sleep 0.5 && systemctl hibernate) &
+        exit 1
+    fi
+fi
+
+exit 0
+SCRIPTEOF
+            
+            # Replace the threshold placeholder
+            sed -i "s/__THRESHOLD__/$THRESHOLD/" "$SCRIPT_PATH"
+            
+            # Make executable
+            chmod 755 "$SCRIPT_PATH"
+            
+            log "Low battery hibernate enabled at ${THRESHOLD}%"
+            echo "SUCCESS"
+            exit 0
+            
+        elif [ "$ACTION" = "disable" ]; then
+            if [ -f "$SCRIPT_PATH" ]; then
+                log "Disabling low battery hibernate..."
+                rm -f "$SCRIPT_PATH"
+                log "Low battery hibernate disabled"
+            else
+                log "Low battery hibernate was not enabled"
+            fi
+            echo "SUCCESS"
+            exit 0
+            
+        else
+            log "ERROR: Invalid action '$ACTION' (must be enable or disable)"
+            echo "ERROR: Invalid action" >&2
+            exit 1
+        fi
+        ;;
         
     *)
-        echo "Usage: $0 {status|prepare|hibernate|suspend-then-hibernate|set-power-button|get-delay|set-delay|cleanup}"
+        echo "Usage: $0 {status|prepare|hibernate|suspend-then-hibernate|set-power-button|get-delay|set-delay|get-low-battery|set-low-battery|cleanup}"
         exit 1
         ;;
 esac
