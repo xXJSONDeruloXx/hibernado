@@ -30,8 +30,9 @@ export _F_SLEEP_CONF="/etc/systemd/sleep.conf"
 export _S_HIBERNATE_SUCCESS="steamos-hibernate-success.service"
 export _F_HIBERNATE_SUCCESS_SERVICE="/etc/systemd/system/$_S_HIBERNATE_SUCCESS"
 export _D_HIBERNATE_SUSPEND_SERVICE="/etc/systemd/system/systemd-suspend-then-hibernate.service.d"
+export _F_HIBERNATE_SUSPEND_RESUME_CONF="$_D_HIBERNATE_SUSPEND_SERVICE/hibernado-resume.conf"
 export _D_HIBERNATE_SERVICE="/etc/systemd/system/systemd-hibernate.service.d"
-export _F_HIBERNADO_RESUME_CONF="$_D_HIBERNATE_SERVICE/hibernado-resume.conf"
+export _F_HIBERNATE_RESUME_CONF="$_D_HIBERNATE_SERVICE/hibernado-resume.conf"
 
 
 ACTION="${1:-status}"
@@ -368,7 +369,7 @@ EOF
         
         log "Creating systemd service to set resume parameters before hibernation..."
         mkdir -p "$_D_HIBERNATE_SERVICE"
-        cat > "$_F_HIBERNADO_RESUME_CONF" << EOF
+        cat > "$_F_HIBERNATE_RESUME_CONF" << EOF
 [Service]
 ExecStartPre=$_F_SET_RESUME_SCRIPT
 ExecStartPost=-$_F_BLUETOOTH_FIX_SCRIPT
@@ -377,7 +378,7 @@ ExecStartPost=-/usr/bin/steamos-bootconf set-mode booted
 EOF
         
         mkdir -p "$_D_HIBERNATE_SUSPEND_SERVICE"
-        cat > "$_F_HIBERNADO_RESUME_CONF" << EOF
+        cat > "$_F_HIBERNATE_SUSPEND_RESUME_CONF" << EOF
 [Service]
 ExecStartPre=$_F_SET_RESUME_SCRIPT
 ExecStartPost=-$_F_BLUETOOTH_FIX_SCRIPT
@@ -562,13 +563,13 @@ EOF
         
         if [ -d "$_D_HIBERNATE_SERVICE" ]; then
             log "Removing hibernate service drop-in..."
-            rm -f "$_F_HIBERNADO_RESUME_CONF"
+            rm -f "$_F_HIBERNATE_RESUME_CONF"
             rmdir "$_D_HIBERNATE_SERVICE" 2>/dev/null || true
         fi
         
         if [ -d "$_D_HIBERNATE_SUSPEND_SERVICE" ]; then
             log "Removing suspend-then-hibernate service drop-in..."
-            rm -f "$_F_HIBERNADO_RESUME_CONF"
+            rm -f "$_F_HIBERNATE_SUSPEND_RESUME_CONF"
             rmdir "$_D_HIBERNATE_SUSPEND_SERVICE" 2>/dev/null || true
         fi
         
