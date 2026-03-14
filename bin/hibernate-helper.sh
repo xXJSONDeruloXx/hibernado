@@ -9,6 +9,27 @@ log() {
     echo "[hibernado] $1" >&2
 }
 
+export _S_BLUETOOTH_FIX="fix-bluetooth-resume.service"
+export _F_BLUETOOTH_FIX_SERVICE="/etc/systemd/system/$_S_BLUETOOTH_FIX"
+export _F_BLUETOOTH_FIX_SCRIPT="/home/deck/.local/bin/fix-bluetooth.sh"
+
+export _D_LIBEXEC="/home/deck/.local/libexec"
+export _F_SET_RESUME_SCRIPT="$_D_LIBEXEC/hibernado-set-resume.sh"
+
+export _F_HOME_SWAP_SERVICE="/etc/systemd/system/home-swapfile.swap"
+export _D_LOGIND_SERVICE="/etc/systemd/system/systemd-logind.service.d"
+export _F_HIBERNADO_OVERRIDE_SERVICE="$_D_LOGIND_SERVICE/hibernado-override.conf"
+
+export _F_HIBERNADO_CONF="/etc/default/grub.d/hibernado.cfg"
+export _F_SLEEP_CONF="/etc/systemd/sleep.conf"
+
+export _S_HIBERNATE_SUCCESS="steamos-hibernate-success.service"
+export _F_HIBERNATE_SUCCESS_SERVICE="/etc/systemd/system/$_S_HIBERNATE_SUCCESS"
+export _D_HIBERNATE_SUSPEND_SERVICE="/etc/systemd/system/systemd-suspend-then-hibernate.service.d"
+export _D_HIBERNATE_SERVICE="/etc/systemd/system/systemd-hibernate.service.d"
+export _F_HIBERNADO_RESUME_CONF="$_D_HIBERNATE_SERVICE/hibernado-resume.conf"
+
+
 ACTION="${1:-status}"
 
 case "$ACTION" in
@@ -33,7 +54,7 @@ case "$ACTION" in
             exit 0
         fi
         
-        if ([ -f /etc/default/grub.d/hibernado.cfg ] && grep -q "resume=" /etc/default/grub.d/hibernado.cfg 2>/dev/null) || \
+        if ([ -f "$_F_HIBERNADO_CONF" ] && grep -q "resume=" $_F_HIBERNADO_CONF 2>/dev/null) || \
            ([ -f /etc/default/grub ] && grep -q "resume=" /etc/default/grub 2>/dev/null); then
             :
         else
@@ -46,12 +67,12 @@ case "$ACTION" in
             exit 0
         fi
         
-        if [ ! -f /etc/systemd/system/fix-bluetooth-resume.service ]; then
+        if [ ! -f "$_F_BLUETOOTH_FIX_SERVICE" ]; then
             echo "BLUETOOTH_FIX_MISSING"
             exit 0
         fi
         
-        if [ ! -f /etc/systemd/sleep.conf ] || ! grep -q "HibernateDelaySec" /etc/systemd/sleep.conf 2>/dev/null; then
+        if [ ! -f "$_F_SLEEP_CONF" ] || ! grep -q "HibernateDelaySec" "$_F_SLEEP_CONF" 2>/dev/null; then
             echo "SLEEP_CONF_NOT_CONFIGURED"
             exit 0
         fi
@@ -165,7 +186,7 @@ case "$ACTION" in
         log "Swapfile offset: $OFF"
         
         log "Creating systemd swap unit..."
-        cat > /etc/systemd/system/home-swapfile.swap << EOF
+        cat > "$_F_HOME_SWAP_SERVICE" << EOF
 [Unit]
 Description=Hibernado Swap File
 Documentation=man:systemd.swap(5)
@@ -180,10 +201,10 @@ EOF
         systemctl daemon-reload
         systemctl enable home-swapfile.swap 2>/dev/null || true
         
-        if [ ! -f /etc/default/grub.d/hibernado.cfg ]; then
+        if [ ! -f "$_F_HIBERNADO_CONF" ]; then
             log "Configuring GRUB for hibernation resume..."
             mkdir -p /etc/default/grub.d
-            cat > /etc/default/grub.d/hibernado.cfg << EOF
+            cat > "$_F_HIBERNADO_CONF" << EOF
 # hibernado plugin - hibernation resume parameters
 GRUB_CMDLINE_LINUX_DEFAULT="\$GRUB_CMDLINE_LINUX_DEFAULT resume=/dev/disk/by-uuid/$UUID resume_offset=$OFF"
 EOF
@@ -196,8 +217,8 @@ EOF
         fi
         
         log "Configuring systemd-logind..."
-        mkdir -p /etc/systemd/system/systemd-logind.service.d
-        cat > /etc/systemd/system/systemd-logind.service.d/hibernado-override.conf << EOF
+        mkdir -p "$_D_LOGIND_SERVICE"
+        cat > "$_F_HIBERNADO_OVERRIDE_SERVICE" << EOF
 [Service]
 Environment=SYSTEMD_BYPASS_HIBERNATION_MEMORY_CHECK=1
 EOF
@@ -205,7 +226,7 @@ EOF
         
         log "Setting up Bluetooth fix for resume..."
         mkdir -p /home/deck/.local/bin
-        cat > /home/deck/.local/bin/fix-bluetooth.sh << 'EOF'
+        cat > "$_F_BLUETOOTH_FIX_SCRIPT" << 'EOF'
 #!/bin/bash
 PATH=/sbin:/usr/sbin:/bin:/usr/bin
 
@@ -227,28 +248,28 @@ if ! is_bluetooth_ok; then
     (echo serial0-0 > /sys/bus/serial/drivers/hci_uart_qca/unbind ; sleep 1 && echo serial0-0 > /sys/bus/serial/drivers/hci_uart_qca/bind)
 fi
 EOF
-        chmod +x /home/deck/.local/bin/fix-bluetooth.sh
-        chown deck:deck /home/deck/.local/bin/fix-bluetooth.sh
+        chmod +x "$_F_BLUETOOTH_FIX_SCRIPT"
+        chown deck:deck "$_F_BLUETOOTH_FIX_SCRIPT"
         
         log "Creating Bluetooth fix systemd service..."
-        cat > /etc/systemd/system/fix-bluetooth-resume.service << EOF
+        cat > "$_F_BLUETOOTH_FIX_SERVICE" << EOF
 [Unit]
 Description=Fix Bluetooth after resume from hibernation
 After=hibernate.target hybrid-sleep.target suspend-then-hibernate.target bluetooth.service
 
 [Service]
 Type=oneshot
-ExecStart=/home/deck/.local/bin/fix-bluetooth.sh
+ExecStart=$_F_BLUETOOTH_FIX_SCRIPT
 
 [Install]
 WantedBy=hibernate.target hybrid-sleep.target suspend-then-hibernate.target
 EOF
         systemctl daemon-reload
-        systemctl enable fix-bluetooth-resume.service
+        systemctl enable "$_S_BLUETOOTH_FIX"
         
         # 7. Configure sleep.conf for suspend-then-hibernate (60 min default)
         log "Configuring suspend-then-hibernate timing..."
-        cat > /etc/systemd/sleep.conf << EOF
+        cat > "$_F_SLEEP_CONF" << EOF
 # hibernado plugin - suspend-then-hibernate configuration
 [Sleep]
 AllowSuspend=yes
@@ -259,8 +280,8 @@ EOF
         systemctl daemon-reload
         
         log "Creating hibernate resume setup script in /home..."
-        mkdir -p /home/deck/.local/libexec
-        cat > /home/deck/.local/libexec/hibernado-set-resume.sh << 'EOF'
+        mkdir -p "$_D_LIBEXEC"
+        cat > "$_F_SET_RESUME_SCRIPT" << 'EOF'
 #!/bin/bash
 # hibernado - Set resume parameters before hibernation
 
@@ -308,29 +329,29 @@ echo "$OFF" > /sys/power/resume_offset 2>/dev/null || echo "[hibernado] WARNING:
 # Set hibernation mode
 echo "platform" > /sys/power/disk 2>/dev/null || echo "[hibernado] WARNING: Could not set hibernation mode" >&2
 EOF
-        chmod +x /home/deck/.local/libexec/hibernado-set-resume.sh
-        chown deck:deck /home/deck/.local/libexec/hibernado-set-resume.sh
+        chmod +x "$_F_SET_RESUME_SCRIPT"
+        chown deck:deck "$_F_SET_RESUME_SCRIPT"
         
         log "Creating systemd service to set resume parameters before hibernation..."
-        mkdir -p /etc/systemd/system/systemd-hibernate.service.d
-        cat > /etc/systemd/system/systemd-hibernate.service.d/hibernado-resume.conf << EOF
+        mkdir -p "$_D_HIBERNATE_SERVICE"
+        cat > "$_F_HIBERNADO_RESUME_CONF" << EOF
 [Service]
-ExecStartPre=/home/deck/.local/libexec/hibernado-set-resume.sh
-ExecStartPost=-/home/deck/.local/bin/fix-bluetooth.sh
+ExecStartPre=$_F_SET_RESUME_SCRIPT
+ExecStartPost=-$_F_BLUETOOTH_FIX_SCRIPT
 ExecStartPost=-/usr/bin/steamos-bootconf set-mode booted
 EOF
         
-        mkdir -p /etc/systemd/system/systemd-suspend-then-hibernate.service.d
-        cat > /etc/systemd/system/systemd-suspend-then-hibernate.service.d/hibernado-resume.conf << EOF
+        mkdir -p "$_D_HIBERNATE_SUSPEND_SERVICE"
+        cat > "$_F_HIBERNADO_RESUME_CONF" << EOF
 [Service]
-ExecStartPre=/home/deck/.local/libexec/hibernado-set-resume.sh
-ExecStartPost=-/home/deck/.local/bin/fix-bluetooth.sh
+ExecStartPre=$_F_SET_RESUME_SCRIPT
+ExecStartPost=-$_F_BLUETOOTH_FIX_SCRIPT
 ExecStartPost=-/usr/bin/steamos-bootconf set-mode booted
 EOF
         systemctl daemon-reload
         
         log "Setting up SteamOS boot counter fix..."
-        cat > /etc/systemd/system/steamos-hibernate-success.service << 'EOF'
+        cat > "$_F_HIBERNATE_SUCCESS_SERVICE" << 'EOF'
 [Unit]
 Description=Mark hibernation resume as successful boot
 After=hibernate.target hybrid-sleep.target suspend-then-hibernate.target
@@ -345,7 +366,7 @@ RemainAfterExit=yes
 WantedBy=hibernate.target hybrid-sleep.target suspend-then-hibernate.target
 EOF
         systemctl daemon-reload
-        systemctl enable steamos-hibernate-success.service 2>/dev/null || log "Note: steamos-bootconf may not be available on this system"
+        systemctl enable "$_S_HIBERNATE_SUCCESS" 2>/dev/null || log "Note: steamos-bootconf may not be available on this system"
         
         log "Hibernation setup complete!"
         echo "SUCCESS:$UUID:$OFF"
@@ -463,9 +484,9 @@ EOF
             rm -f "$SYMLINK_PATH"
         fi
         
-        if [ -f /etc/default/grub.d/hibernado.cfg ]; then
+        if [ -f "$_F_HIBERNADO_CONF" ]; then
             log "Removing GRUB hibernation config..."
-            rm -f /etc/default/grub.d/hibernado.cfg
+            rm -f "$_F_HIBERNADO_CONF"
             rmdir /etc/default/grub.d 2>/dev/null || true
             log "Rebuilding GRUB configuration..."
             if ! update-grub 2>&1; then
@@ -476,53 +497,53 @@ EOF
             fi
         fi
         
-        if [ -f /etc/systemd/system/systemd-logind.service.d/hibernado-override.conf ]; then
+        if [ -f "$_F_HIBERNADO_OVERRIDE_SERVICE" ]; then
             log "Removing systemd-logind override..."
-            rm -f /etc/systemd/system/systemd-logind.service.d/hibernado-override.conf
-            rmdir /etc/systemd/system/systemd-logind.service.d 2>/dev/null || true
+            rm -f "$_F_HIBERNADO_OVERRIDE_SERVICE"
+            rmdir "$_D_LOGIND_SERVICE" 2>/dev/null || true
         fi
         
         log "Removing Bluetooth fix service..."
-        systemctl disable fix-bluetooth-resume.service 2>/dev/null || true
-        rm -f /etc/systemd/system/fix-bluetooth-resume.service
-        rm -f /home/deck/.local/bin/fix-bluetooth.sh
+        systemctl disable "$_S_BLUETOOTH_FIX" 2>/dev/null || true
+        rm -f "$_F_BLUETOOTH_FIX_SERVICE"
+        rm -f "$_F_BLUETOOTH_FIX_SCRIPT"
         rmdir /home/deck/.local/bin 2>/dev/null || true
         
         log "Removing SteamOS boot counter fix service..."
-        systemctl disable steamos-hibernate-success.service 2>/dev/null || true
-        rm -f /etc/systemd/system/steamos-hibernate-success.service
+        systemctl disable "$_S_HIBERNATE_SUCCESS" 2>/dev/null || true
+        rm -f "$_F_HIBERNATE_SUCCESS_SERVICE"
         
-        if [ -f /etc/systemd/sleep.conf ]; then
+        if [ -f "$_F_SLEEP_CONF" ]; then
             log "Removing sleep configuration..."
-            rm -f /etc/systemd/sleep.conf
+            rm -f "$_F_SLEEP_CONF"
         fi
         
-        if [ -d /etc/systemd/system/systemd-hibernate.service.d ]; then
+        if [ -d "$_D_HIBERNATE_SERVICE" ]; then
             log "Removing hibernate service drop-in..."
-            rm -f /etc/systemd/system/systemd-hibernate.service.d/hibernado-resume.conf
-            rmdir /etc/systemd/system/systemd-hibernate.service.d 2>/dev/null || true
+            rm -f "$_F_HIBERNADO_RESUME_CONF"
+            rmdir "$_D_HIBERNATE_SERVICE" 2>/dev/null || true
         fi
         
-        if [ -d /etc/systemd/system/systemd-suspend-then-hibernate.service.d ]; then
+        if [ -d "$_D_HIBERNATE_SUSPEND_SERVICE" ]; then
             log "Removing suspend-then-hibernate service drop-in..."
-            rm -f /etc/systemd/system/systemd-suspend-then-hibernate.service.d/hibernado-resume.conf
-            rmdir /etc/systemd/system/systemd-suspend-then-hibernate.service.d 2>/dev/null || true
+            rm -f "$_F_HIBERNADO_RESUME_CONF"
+            rmdir "$_D_HIBERNATE_SUSPEND_SERVICE" 2>/dev/null || true
         fi
         
-        if [ -f /home/deck/.local/libexec/hibernado-set-resume.sh ]; then
+        if [ -f "$_F_SET_RESUME_SCRIPT" ]; then
             log "Removing resume setup script..."
-            rm -f /home/deck/.local/libexec/hibernado-set-resume.sh
-            rmdir /home/deck/.local/libexec 2>/dev/null || true
+            rm -f "$_F_SET_RESUME_SCRIPT"
+            rmdir "$_D_LIBEXEC" 2>/dev/null || true
         fi
         
         log "Reloading systemd configuration..."
         systemctl daemon-reload
         
-        if [ -f /etc/systemd/system/home-swapfile.swap ]; then
+        if [ -f "$_F_HOME_SWAP_SERVICE" ]; then
             log "Removing systemd swap unit..."
             systemctl disable home-swapfile.swap 2>/dev/null || true
             systemctl stop home-swapfile.swap 2>/dev/null || true
-            rm -f /etc/systemd/system/home-swapfile.swap
+            rm -f "$_F_HOME_SWAP_SERVICE"
         fi
         
         if [ -f "$MARKER" ]; then
@@ -558,9 +579,9 @@ EOF
     
     get-delay)
         # Get current hibernate delay setting from sleep.conf
-        if [ -f /etc/systemd/sleep.conf ]; then
+        if [ -f "$_F_SLEEP_CONF" ]; then
             # Extract the delay value (strip 'min' suffix and get the number)
-            DELAY=$(grep "^HibernateDelaySec=" /etc/systemd/sleep.conf | cut -d'=' -f2 | sed 's/min$//')
+            DELAY=$(grep "^HibernateDelaySec=" "$_F_SLEEP_CONF" | cut -d'=' -f2 | sed 's/min$//')
             if [ -n "$DELAY" ]; then
                 echo "$DELAY"
                 exit 0
@@ -588,7 +609,7 @@ EOF
         log "Setting hibernate delay to $DELAY_MIN minutes..."
         
         # Update sleep.conf with new delay
-        cat > /etc/systemd/sleep.conf << EOF
+        cat > "$_F_SLEEP_CONF" << EOF
 # hibernado plugin - suspend-then-hibernate configuration
 [Sleep]
 AllowSuspend=yes
