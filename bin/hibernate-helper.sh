@@ -13,6 +13,10 @@ export _S_BLUETOOTH_FIX="fix-bluetooth-resume.service"
 export _F_BLUETOOTH_FIX_SERVICE="/etc/systemd/system/$_S_BLUETOOTH_FIX"
 export _F_BLUETOOTH_FIX_SCRIPT="/home/deck/.local/bin/fix-bluetooth.sh"
 
+export _S_AUDIO_FIX="fix-audio-resume.service"
+export _F_AUDIO_FIX_SERVICE="/etc/systemd/system/$_S_AUDIO_FIX"
+export _F_AUDIO_FIX_SCRIPT="/home/deck/.local/bin/fix-audio.sh"
+
 export _D_LIBEXEC="/home/deck/.local/libexec"
 export _F_SET_RESUME_SCRIPT="$_D_LIBEXEC/hibernado-set-resume.sh"
 
@@ -68,6 +72,11 @@ case "$ACTION" in
         fi
         
         if [ ! -f "$_F_BLUETOOTH_FIX_SERVICE" ]; then
+            echo "BLUETOOTH_FIX_MISSING"
+            exit 0
+        fi
+
+        if [ ! -f "$_F_AUDIO_FIX_SERVICE" ]; then
             echo "BLUETOOTH_FIX_MISSING"
             exit 0
         fi
@@ -266,6 +275,31 @@ WantedBy=hibernate.target hybrid-sleep.target suspend-then-hibernate.target
 EOF
         systemctl daemon-reload
         systemctl enable "$_S_BLUETOOTH_FIX"
+
+
+        cat > "$_F_AUDIO_FIX_SCRIPT" << 'EOF'
+#!/bin/bash
+systemctl --user restart pipewire pipewire-pulse wireplumber
+EOF
+        chmod +x "$_F_AUDIO_FIX_SCRIPT"
+        chown deck:deck "$_F_AUDIO_FIX_SCRIPT"
+
+        log "Creating audio fix systemd service..."
+        cat > "$_F_AUDIO_FIX_SERVICE" << EOF
+[Unit]
+Description=Fix Audio after resume from hibernation
+After=hibernate.target hybrid-sleep.target suspend-then-hibernate.target bluetooth.service
+
+[Service]
+Type=oneshot
+ExecStart=$_F_AUDIO_FIX_SCRIPT
+
+[Install]
+WantedBy=hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+EOF
+        systemctl daemon-reload
+        systemctl enable "$_S_AUDIO_FIX"
+
         
         # 7. Configure sleep.conf for suspend-then-hibernate (60 min default)
         log "Configuring suspend-then-hibernate timing..."
@@ -338,6 +372,7 @@ EOF
 [Service]
 ExecStartPre=$_F_SET_RESUME_SCRIPT
 ExecStartPost=-$_F_BLUETOOTH_FIX_SCRIPT
+ExecStartPost=-$_F_AUDIO_FIX_SCRIPT
 ExecStartPost=-/usr/bin/steamos-bootconf set-mode booted
 EOF
         
@@ -346,6 +381,7 @@ EOF
 [Service]
 ExecStartPre=$_F_SET_RESUME_SCRIPT
 ExecStartPost=-$_F_BLUETOOTH_FIX_SCRIPT
+ExecStartPost=-$_F_AUDIO_FIX_SCRIPT
 ExecStartPost=-/usr/bin/steamos-bootconf set-mode booted
 EOF
         systemctl daemon-reload
@@ -507,6 +543,12 @@ EOF
         systemctl disable "$_S_BLUETOOTH_FIX" 2>/dev/null || true
         rm -f "$_F_BLUETOOTH_FIX_SERVICE"
         rm -f "$_F_BLUETOOTH_FIX_SCRIPT"
+
+        log "Removing audio fix service..."
+        systemctl disable "$_S_AUDIO_FIX" 2>/dev/null || true
+        rm -f "$_F_AUDIO_FIX_SERVICE"
+        rm -f "$_F_AUDIO_FIX_SCRIPT"
+
         rmdir /home/deck/.local/bin 2>/dev/null || true
         
         log "Removing SteamOS boot counter fix service..."
