@@ -221,11 +221,64 @@ is_bluetooth_ok() {
     fi
 }
 
+is_wifi_ok() {
+    echo "Checking Wi-Fi status..."
+    
+    adapter_status=$(iwctl adapter list | grep phy | awk '{print $3}')  # Extract "Powered" status from the adapter list
+    device_status=$(iwctl device list | grep phy | awk '{print $4}')   # Extract "Powered" status from the device list
+
+    echo "adapter status: $adapter_status, device_status: $device_status"
+
+    if [ "$adapter_status" == "on" ]; then
+        if [ "$device_status" != "on" ]; then
+            echo "Wi-Fi is misbehaving."
+            return 1  # Wi-Fi needs fixing
+        else
+            echo "Wi-Fi is working fine."
+            return 0  # Wi-Fi is OK
+        fi
+    else
+        echo "Wi-Fi adapter is powered off. No issues detected."
+        return 0  # Wi-Fi is OK
+    fi
+}
+
+fix_wifi_rtw_822ce() {
+    WIRELESS_ADDR=$(lspci -m | grep -i "network" | awk -F ' ' '{print $1}')
+    echo "0000:${WIRELESS_ADDR}" > "/sys/bus/pci/drivers/rtw_8822ce/unbind"
+    sleep 1
+    echo "0000:${WIRELESS_ADDR}" > "/sys/bus/pci/drivers/rtw_8822ce/bind"
+}
+
+fix_wifi_ath11k_pci() {
+    WIRELESS_ADDR=$(lspci -m | grep -i "network" | awk -F ' ' '{print $1}')
+    echo "0000:${WIRELESS_ADDR}" > "/sys/bus/pci/drivers/ath11k_pci/unbind"
+    sleep 1
+    echo "0000:${WIRELESS_ADDR}" > "/sys/bus/pci/drivers/ath11k_pci/bind"
+}
+
 sleep 2
 
 if ! is_bluetooth_ok; then
     (echo serial0-0 > /sys/bus/serial/drivers/hci_uart_qca/unbind ; sleep 1 && echo serial0-0 > /sys/bus/serial/drivers/hci_uart_qca/bind)
 fi
+
+if ! is_wifi_ok; then
+    fix_wifi_rtw_822ce
+    fix_wifi_ath11k_pci
+fi
+
+# Fix audio unconditionally
+
+AUDIO_ADDR=$(lspci -m | grep -i "Audio Coprocessor" | awk -F ' ' '{print $1}')
+echo "0000:${AUDIO_ADDR}" > "/sys/bus/pci/drivers/snd_pci_acp5x/unbind"
+sleep 1
+echo "0000:${AUDIO_ADDR}" > "/sys/bus/pci/drivers/snd_pci_acp5x/bind"
+
+AUDIO_ADDR=$(lspci -m | grep -i "Audio Controller" | awk -F ' ' '{print $1}')
+echo "0000:${AUDIO_ADDR}" > "/sys/bus/pci/drivers/snd_hda_intel/unbind"
+sleep 1
+echo "0000:${AUDIO_ADDR}" > "/sys/bus/pci/drivers/snd_hda_intel/bind"
 EOF
         chmod +x /home/deck/.local/bin/fix-bluetooth.sh
         chown deck:deck /home/deck/.local/bin/fix-bluetooth.sh
