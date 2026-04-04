@@ -30,6 +30,7 @@ const cleanupHibernate = callable<[], any>("cleanup_hibernate");
 const setPowerButtonOverride = callable<[boolean, string], any>("set_power_button_override");
 const getHibernateDelay = callable<[], any>("get_hibernate_delay");
 const setHibernateDelay = callable<[number], any>("set_hibernate_delay");
+const runBluetoothFixes = callable<[], any>("run_bluetooth_fixes");
 
 // Custom modal component that shows hibernating state before actually hibernating
 function HibernateConfirmModal({ closeModal }: { closeModal?: () => void }) {
@@ -281,6 +282,22 @@ function Content() {
     }
   };
 
+  const handleRunFixes = async () => {
+    setIsLoading(true);
+
+    try {
+      const result = await runBluetoothFixes();
+
+      if (!result.success) {
+        console.error("Run fixes failed:", result.error);
+      }
+    } catch (error) {
+      console.error("Run fixes failed:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const formatDelayLabel = (minutes: number): string => {
     if (minutes < 60) {
       return `${minutes} min`;
@@ -391,6 +408,16 @@ function Content() {
                 disabled={isLoading}
               />
             </Field>
+          </PanelSectionRow>
+
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              onClick={handleRunFixes}
+              disabled={isLoading}
+            >
+              {isLoading ? "Running Fixes..." : "Run Fixes"}
+            </ButtonItem>
           </PanelSectionRow>
         </>
       )}
